@@ -9,13 +9,44 @@ $ErrorActionPreference = 'Stop'
 function Resolve-Php82 {
   $candidates = @()
 
+  if ($env:PHP_82_PATH) {
+    $candidates += $env:PHP_82_PATH
+  }
+
+  if ($env:LARAGON_PHP) {
+    $candidates += $env:LARAGON_PHP
+  }
+
   if ($env:XAMPP_PHP) {
     $candidates += $env:XAMPP_PHP
   }
 
+  $laragonRoots = @(
+    'C:\laragon\bin\php',
+    'D:\laragon\bin\php'
+  )
+
+  foreach ($root in $laragonRoots) {
+    if (-not (Test-Path -LiteralPath $root)) { continue }
+    try {
+      $phpDirs = Get-ChildItem -Path $root -Directory -ErrorAction Stop |
+        Sort-Object Name -Descending
+      foreach ($dir in $phpDirs) {
+        $phpExe = Join-Path $dir.FullName 'php.exe'
+        if (Test-Path -LiteralPath $phpExe) {
+          $candidates += $phpExe
+        }
+      }
+    } catch {
+      # ignore scanning errors
+    }
+  }
+
   $candidates += @(
     'F:\\xampp\\php\\php.exe',
-    'C:\\xampp\\php\\php.exe'
+    'C:\\xampp\\php\\php.exe',
+    'C:\\laragon\\bin\\php\\php.exe',
+    'D:\\laragon\\bin\\php\\php.exe'
   )
 
   try {
@@ -43,7 +74,7 @@ function Resolve-Php82 {
     }
   }
 
-  throw "PHP 8.2+ not found. Set XAMPP_PHP to your php.exe (example: `$env:XAMPP_PHP='F:\\xampp\\php\\php.exe')."
+  throw "PHP 8.2+ not found. Set PHP_82_PATH (or LARAGON_PHP/XAMPP_PHP) to your php.exe."
 }
 
 $php82 = Resolve-Php82

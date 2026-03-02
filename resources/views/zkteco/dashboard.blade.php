@@ -52,6 +52,10 @@
                             <p class="text-xs text-slate-400">Security PUSH Protocol Dashboard</p>
                         </div>
                     </div>
+                    <nav class="hidden md:flex items-center gap-1">
+                        <a href="/dashboard" class="px-3 py-1.5 rounded-lg text-sm font-medium text-white bg-slate-700/80">Dashboard</a>
+                        <a href="/register-user" class="px-3 py-1.5 rounded-lg text-sm font-medium text-slate-400 hover:text-white hover:bg-slate-700/50 transition-colors">Register Users</a>
+                    </nav>
                     <div class="flex items-center gap-4">
                         <div id="server-status" class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-700/50 text-xs">
                             <span class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot"></span>

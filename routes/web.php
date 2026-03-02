@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\ZKTeco\AdmsController;
 use App\Http\Controllers\ZKTeco\DashboardController;
+use App\Http\Controllers\ZKTeco\UserRegistrationController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -21,6 +22,7 @@ Route::get('/', function () {
 
 // ─── Dashboard & API ─────────────────────────────────────────────────────────
 Route::get('/dashboard', [DashboardController::class, 'index']);
+Route::get('/register-user', [UserRegistrationController::class, 'index']);
 
 Route::prefix('api/zkteco')->group(function () {
     Route::get('stats', [DashboardController::class, 'stats']);

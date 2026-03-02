@@ -4,12 +4,17 @@ namespace App\Http\Controllers\ZKTeco;
 
 use App\Http\Controllers\Controller;
 use App\Models\ZktecoRawLog;
+use App\Services\ZKTeco\DeviceCommandQueue;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Http\Response;
 
 class AdmsController extends Controller
 {
+    public function __construct(private readonly DeviceCommandQueue $commandQueue)
+    {
+    }
+
     /**
      * Monotonically incrementing command ID for Security PUSH protocol.
      * In production, persist this in DB/cache. For now, use timestamp-based IDs.
@@ -227,6 +232,17 @@ class AdmsController extends Controller
 
         $sn = (string) ($request->query('SN') ?? $request->query('sn') ?? 'UNKNOWN');
 
+        $queued = $this->commandQueue->pullPendingCommands($sn, 'getrequest');
+        if (! empty($queued)) {
+            Log::info('ZKTeco: sending queued commands via getrequest', [
+                'device_sn' => $sn,
+                'commands' => $queued,
+            ]);
+
+            return response(implode("\n", $queued) . "\n", 200)
+                ->header('Content-Type', 'text/plain; charset=UTF-8');
+        }
+
         // Check for pending commands in config (or future: database queue).
         $commands = config('zkteco.iclock.getrequest_commands', []);
 
@@ -262,8 +278,12 @@ class AdmsController extends Controller
         $this->storeRaw($request, '/iclock/devicecmd');
 
         $body = $request->getContent();
+        $cmdId = $this->extractCmdIdFromPayload($body);
+        $this->commandQueue->markAcknowledged($cmdId, $body);
+
         Log::info('ZKTeco: devicecmd (command result)', [
             'device_sn' => $request->query('SN'),
+            'cmd_id' => $cmdId,
             'body' => $body,
         ]);
 
@@ -283,8 +303,12 @@ class AdmsController extends Controller
 
         if ($request->isMethod('post')) {
             $body = $request->getContent();
+            $cmdId = $this->extractCmdIdFromPayload($body);
+            $this->commandQueue->markAcknowledged($cmdId, $body);
+
             Log::info('ZKTeco: service/control POST (command result)', [
                 'device_sn' => $sn,
+                'cmd_id' => $cmdId,
                 'body' => $body,
             ]);
             return response("OK\r\n", 200)
@@ -293,6 +317,18 @@ class AdmsController extends Controller
 
         // GET — heartbeat / poll for commands.
         // Use same command queue as getrequest.
+        $queued = $this->commandQueue->pullPendingCommands($sn, 'service_control');
+
+        if (! empty($queued)) {
+            Log::info('ZKTeco: sending queued commands via service/control', [
+                'device_sn' => $sn,
+                'commands' => $queued,
+            ]);
+
+            return response(implode("\n", $queued) . "\n", 200)
+                ->header('Content-Type', 'text/plain; charset=UTF-8');
+        }
+
         $commands = config('zkteco.iclock.security_push_commands', []);
 
         if (! empty($commands)) {
@@ -450,5 +486,18 @@ class AdmsController extends Controller
             'endpoint' => $endpoint,
             'device_sn' => $record->device_sn,
         ]);
+    }
+
+    private function extractCmdIdFromPayload(string $payload): ?int
+    {
+        if (preg_match('/(?:^|[&\s])ID=(\d+)/i', $payload, $matches)) {
+            return (int) $matches[1];
+        }
+
+        if (preg_match('/\bcmdid=(\d+)\b/i', $payload, $matches)) {
+            return (int) $matches[1];
+        }
+
+        return null;
     }
 }
