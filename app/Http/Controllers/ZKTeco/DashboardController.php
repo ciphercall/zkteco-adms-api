@@ -3,9 +3,12 @@
 namespace App\Http\Controllers\ZKTeco;
 
 use App\Http\Controllers\Controller;
+use App\Models\ZktecoDeviceCommand;
+use App\Models\ZktecoDeviceUser;
 use App\Models\ZktecoRawLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 class DashboardController extends Controller
@@ -146,44 +149,137 @@ class DashboardController extends Controller
         $page    = max(1, (int) $request->query('page', 1));
         $perPage = min((int) ($request->query('per_page', 25)), 100);
 
-        $logs = ZktecoRawLog::where('endpoint', '/iclock/cdata')
-            ->where('method', 'POST')
-            ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(query_params, '$.table')) = 'tabledata'")
-            ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(query_params, '$.tablename')) = 'user'")
-            ->orderBy('id', 'desc')
-            ->get();
+        $allUsers = ZktecoDeviceUser::query()
+            ->orderBy('updated_at', 'desc')
+            ->get()
+            ->values();
 
-        $users = collect();
-        foreach ($logs as $log) {
-            $parsed = $this->parseUserTabledata($log->raw_body);
-            foreach ($parsed as $row) {
-                $pin = $row['pin'] ?? null;
-                if ($pin !== null) {
-                    $users->put($pin, [
-                        'pin'       => $pin,
-                        'name'      => $row['name'] ?? '',
-                        'privilege' => $this->privilegeLabel($row['privilege'] ?? '0'),
-                        'card'      => $row['cardno'] ?? $row['card'] ?? '',
-                        'group'     => $row['group'] ?? '',
-                        'disabled'  => ($row['disable'] ?? '0') === '1',
-                        'synced_at' => $log->created_at->toDateTimeString(),
-                    ]);
-                }
+        $allUsers = $this->filterUsersToLatestDeviceSnapshot($allUsers);
+
+        $total = $allUsers->count();
+        $lastPage = max(1, (int) ceil($total / $perPage));
+        $safePage = min($page, $lastPage);
+        $pagedUsers = $allUsers->forPage($safePage, $perPage)->values();
+
+        $users = $pagedUsers->map(function ($user) {
+            $commands = ZktecoDeviceCommand::where('device_sn', $user->device_sn)
+                ->where('pin', $user->pin)
+                ->get();
+
+            $summary = $this->summarizeCommandsForSync($commands);
+
+            $syncStatus = 'pending';
+            if ($summary['failed'] > 0) {
+                $syncStatus = 'failed';
+            } elseif ($summary['acked'] === $summary['total'] && $summary['total'] > 0) {
+                $syncStatus = 'synced';
+            } elseif ($summary['sent'] > 0 || $summary['acked'] > 0) {
+                $syncStatus = 'syncing';
             }
-        }
 
-        $allUsers  = $users->values();
-        $total     = $allUsers->count();
-        $lastPage  = max(1, (int) ceil($total / $perPage));
-        $paged     = $allUsers->forPage($page, $perPage);
+            return [
+                'id' => $user->id,
+                'device_sn' => $user->device_sn,
+                'pin' => $user->pin,
+                'name' => $user->name,
+                'privilege' => $this->privilegeLabel((string) $user->privilege),
+                'card' => $user->card_no ?? '',
+                'group' => (string) $user->group_id,
+                'disabled' => (bool) $user->disabled,
+                'sync_status' => $syncStatus,
+                'command_summary' => $summary,
+                'synced_at' => optional($user->updated_at)->toDateTimeString(),
+            ];
+        });
 
         return response()->json([
-            'users'        => $paged->values(),
-            'current_page' => $page,
+            'users'        => $users,
+            'current_page' => $safePage,
             'last_page'    => $lastPage,
             'total'        => $total,
             'per_page'     => $perPage,
         ]);
+    }
+
+    private function filterUsersToLatestDeviceSnapshot(Collection $users): Collection
+    {
+        if ($users->isEmpty()) {
+            return $users;
+        }
+
+        $snapshots = $this->latestDeviceUserPinsBySn();
+        if (empty($snapshots)) {
+            return $users;
+        }
+
+        return $users
+            ->filter(function ($user) use ($snapshots) {
+                $deviceSn = (string) $user->device_sn;
+                if (! array_key_exists($deviceSn, $snapshots)) {
+                    return true;
+                }
+
+                return in_array((int) $user->pin, $snapshots[$deviceSn], true);
+            })
+            ->values();
+    }
+
+    private function latestDeviceUserPinsBySn(): array
+    {
+        $logs = ZktecoRawLog::query()
+            ->where('endpoint', '/iclock/querydata')
+            ->where('method', 'POST')
+            ->whereNotNull('device_sn')
+            ->orderByDesc('id')
+            ->limit(500)
+            ->get(['device_sn', 'query_params', 'raw_body']);
+
+        $map = [];
+
+        foreach ($logs as $log) {
+            $deviceSn = (string) ($log->device_sn ?? '');
+            if ($deviceSn === '' || array_key_exists($deviceSn, $map)) {
+                continue;
+            }
+
+            $query = is_array($log->query_params) ? $log->query_params : [];
+            $type = strtolower((string) ($query['type'] ?? ''));
+            $tablename = strtolower((string) ($query['tablename'] ?? ''));
+            if ($type !== 'tabledata' || $tablename !== 'user') {
+                continue;
+            }
+
+            $packCnt = (int) ($query['packcnt'] ?? 1);
+            $packIdx = (int) ($query['packidx'] ?? 1);
+            if ($packCnt > 1 && $packIdx !== $packCnt) {
+                continue;
+            }
+
+            $expectedCount = isset($query['count']) && is_numeric($query['count'])
+                ? (int) $query['count']
+                : null;
+
+            if ($expectedCount === 0) {
+                $map[$deviceSn] = [];
+                continue;
+            }
+
+            $rows = $this->parseUserTabledata((string) $log->raw_body);
+            $pins = collect($rows)
+                ->map(fn ($row) => isset($row['pin']) ? (int) $row['pin'] : 0)
+                ->filter(fn ($pin) => $pin > 0)
+                ->unique()
+                ->values()
+                ->all();
+
+            if (empty($pins) && $expectedCount !== null && $expectedCount > 0) {
+                continue;
+            }
+
+            $map[$deviceSn] = $pins;
+        }
+
+        return $map;
     }
 
     /**
@@ -495,4 +591,84 @@ class DashboardController extends Controller
             default => "Level {$pri}",
         };
     }
+
+    private function summarizeCommandsForSync(Collection $commands): array
+    {
+        $summary = [
+            'total' => 0,
+            'pending' => 0,
+            'sent' => 0,
+            'acked' => 0,
+            'failed' => 0,
+        ];
+
+        if ($commands->isEmpty()) {
+            return $summary;
+        }
+
+        $logicalGroups = $commands
+            ->sortByDesc('id')
+            ->groupBy(function ($command) {
+                return $this->logicalCommandKey((string) $command->command_template);
+            })
+            ->map(fn ($group) => $group->first());
+
+        foreach ($logicalGroups as $command) {
+            $logicalKey = $this->logicalCommandKey((string) $command->command_template);
+            if (! in_array($logicalKey, ['user_sync', 'face_push', 'fingerprint_push'], true)) {
+                continue;
+            }
+
+            $summary['total']++;
+
+            $status = (string) $command->status;
+
+            if ($status === 'acked') {
+                $summary['acked']++;
+                continue;
+            }
+            if ($status === 'sent') {
+                $summary['sent']++;
+                continue;
+            }
+            if ($status === 'pending') {
+                $summary['pending']++;
+                continue;
+            }
+            if ($status === 'failed') {
+                $summary['failed']++;
+            }
+        }
+
+        return $summary;
+    }
+
+    private function logicalCommandKey(string $template): string
+    {
+        $body = preg_replace('/^C:\{CMDID\}:/', '', $template);
+
+        if (str_contains($body, 'DATA UPDATE user')) {
+            return 'user_sync';
+        }
+        if (str_contains($body, 'DATA UPDATE biophoto')) {
+            return 'face_push';
+        }
+        if (str_contains($body, 'DATA UPDATE biodata')) {
+            return 'fingerprint_push';
+        }
+        if (
+            str_contains($body, 'DATA DELETE tablename=user')
+            || str_contains($body, 'DATA DELETE user')
+            || str_contains($body, 'DELETE USER')
+            || str_contains($body, 'DeleteUser')
+        ) {
+            return 'user_delete';
+        }
+        if (str_contains($body, 'DATA QUERY tablename=user')) {
+            return 'user_query';
+        }
+
+        return trim((string) $body);
+    }
+
 }

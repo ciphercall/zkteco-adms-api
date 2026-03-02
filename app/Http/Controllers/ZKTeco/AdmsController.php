@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\ZKTeco;
 
 use App\Http\Controllers\Controller;
+use App\Models\ZktecoDeviceCommand;
+use App\Models\ZktecoDeviceUser;
 use App\Models\ZktecoRawLog;
 use App\Services\ZKTeco\DeviceCommandQueue;
 use Illuminate\Http\Request;
@@ -121,6 +123,16 @@ class AdmsController extends Controller
             'body_length' => strlen($body),
             'body_preview' => substr($body, 0, 500),
         ]);
+
+        if ($table === 'tabledata' && $tablename === 'user' && $sn !== 'UNKNOWN' && $body !== '') {
+            $synced = $this->upsertDeviceUsersFromPayload($sn, $body);
+            if ($synced > 0) {
+                Log::info('ZKTeco: cdata user sync upserted', [
+                    'device_sn' => $sn,
+                    'count' => $synced,
+                ]);
+            }
+        }
 
         // Return proper acknowledgment per table type (Section 10).
         // rtlog → "OK" (Section 10.2)
@@ -359,11 +371,35 @@ class AdmsController extends Controller
     {
         $this->storeRaw($request, '/iclock/querydata');
 
+        $sn = (string) ($request->query('SN') ?? $request->query('sn') ?? 'UNKNOWN');
         $body = $request->getContent();
+        $synced = 0;
+        $removed = 0;
+        $cmdId = (int) ($request->query('cmdid') ?? 0);
+        $type = strtolower((string) $request->query('type', ''));
+        $tablename = strtolower((string) $request->query('tablename', ''));
+        $countRaw = $request->query('count');
+        $expectedCount = is_numeric($countRaw) ? (int) $countRaw : null;
+        $packCnt = (int) ($request->query('packcnt') ?? 1);
+        $packIdx = (int) ($request->query('packidx') ?? 1);
+        $isLastPacket = $packCnt <= 1 || $packIdx === $packCnt;
+        $isExplicitUserTableResponse = $type === 'tabledata' && $tablename === 'user' && $isLastPacket;
+
+        if ($sn !== 'UNKNOWN' && $body !== '') {
+            $synced = $this->upsertDeviceUsersFromPayload($sn, $body);
+
+            if ($isExplicitUserTableResponse || $this->isUserQueryResponse($cmdId > 0 ? $cmdId : null, $sn)) {
+                $rows = $this->parseUserTabledata($body);
+                $removed = $this->reconcileDeviceUsersToPins($sn, $rows, $expectedCount);
+            }
+        }
+
         Log::info('ZKTeco: querydata', [
             'device_sn' => $request->query('SN'),
             'type' => $request->query('type'),
             'cmdid' => $request->query('cmdid'),
+            'synced_users' => $synced,
+            'reconciled_removed' => $removed,
             'body_length' => strlen($body),
             'body_preview' => substr($body, 0, 1000),
         ]);
@@ -499,5 +535,114 @@ class AdmsController extends Controller
         }
 
         return null;
+    }
+
+    private function upsertDeviceUsersFromPayload(string $deviceSn, string $body): int
+    {
+        $rows = $this->parseUserTabledata($body);
+        if (empty($rows)) {
+            return 0;
+        }
+
+        $count = 0;
+
+        foreach ($rows as $row) {
+            $pin = isset($row['pin']) ? (int) $row['pin'] : 0;
+            if ($pin <= 0) {
+                continue;
+            }
+
+            ZktecoDeviceUser::updateOrCreate(
+                [
+                    'device_sn' => $deviceSn,
+                    'pin' => $pin,
+                ],
+                [
+                    'name' => (string) ($row['name'] ?? ''),
+                    'privilege' => (int) ($row['privilege'] ?? 0),
+                    'card_no' => (string) ($row['cardno'] ?? $row['card'] ?? ''),
+                    'group_id' => (int) ($row['group'] ?? 1),
+                    'disabled' => ((string) ($row['disable'] ?? '0')) === '1',
+                ]
+            );
+
+            $count++;
+        }
+
+        return $count;
+    }
+
+    private function isUserQueryResponse(?int $cmdId, string $deviceSn): bool
+    {
+        if (! $cmdId) {
+            return false;
+        }
+
+        return ZktecoDeviceCommand::query()
+            ->where('cmd_id', $cmdId)
+            ->where('device_sn', $deviceSn)
+            ->where('command_template', 'like', '%DATA QUERY tablename=user%')
+            ->exists();
+    }
+
+    private function reconcileDeviceUsersToPins(string $deviceSn, array $rows, ?int $expectedCount = null): int
+    {
+        if ($expectedCount === 0) {
+            return ZktecoDeviceUser::query()
+                ->where('device_sn', $deviceSn)
+                ->delete();
+        }
+
+        if (empty($rows)) {
+            return 0;
+        }
+
+        $pins = collect($rows)
+            ->map(fn ($row) => isset($row['pin']) ? (int) $row['pin'] : 0)
+            ->filter(fn ($pin) => $pin > 0)
+            ->unique()
+            ->values();
+
+        if ($pins->isEmpty()) {
+            return 0;
+        }
+
+        return ZktecoDeviceUser::query()
+            ->where('device_sn', $deviceSn)
+            ->whereNotIn('pin', $pins->all())
+            ->delete();
+    }
+
+    private function parseUserTabledata(string $body): array
+    {
+        $segments = preg_split('/(?=user\s+uid=|user\s+pin=|uid=\d+\tcardno=)/i', trim($body));
+        $rows = [];
+
+        foreach ($segments as $segment) {
+            $segment = trim($segment);
+            if ($segment === '') {
+                continue;
+            }
+
+            $segment = preg_replace('/^user\s+/i', '', $segment);
+
+            $parts = preg_split('/\t+/', $segment);
+            $row = [];
+            foreach ($parts as $part) {
+                $part = trim($part);
+                if (! str_contains($part, '=')) {
+                    continue;
+                }
+
+                [$key, $val] = explode('=', $part, 2);
+                $row[strtolower(trim($key))] = trim($val);
+            }
+
+            if (! empty($row) && array_key_exists('pin', $row)) {
+                $rows[] = $row;
+            }
+        }
+
+        return $rows;
     }
 }

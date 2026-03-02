@@ -22,8 +22,10 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
 
 Route::get('/zkteco/raw-logs', [RawLogsController::class, 'index']);
 Route::post('/zkteco/register-user', [UserRegistrationController::class, 'store']);
+Route::put('/zkteco/device-users/{id}', [UserRegistrationController::class, 'update']);
+Route::delete('/zkteco/device-users/{id}', [UserRegistrationController::class, 'destroy']);
+Route::post('/zkteco/sync-device-users', [UserRegistrationController::class, 'syncDeviceUsers']);
 Route::get('/zkteco/device-users-list', [UserRegistrationController::class, 'deviceUsersList']);
 Route::get('/zkteco/command-status/{device_sn}/{pin}', [UserRegistrationController::class, 'commandStatus']);
-Route::get('/zkteco/enrollment-status/{device_sn}/{pin}', [UserRegistrationController::class, 'enrollmentStatus']);
 Route::get('/zkteco/known-devices', [UserRegistrationController::class, 'knownDevices']);
 Route::get('/zkteco/registration-stats', [UserRegistrationController::class, 'registrationStats']);

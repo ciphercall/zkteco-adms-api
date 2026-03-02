@@ -37,7 +37,6 @@ You can now register a user in the Laravel app and automatically queue device co
 - user profile (`DATA UPDATE user`)
 - face template (`DATA UPDATE biophoto`) when provided
 - fingerprint template (`DATA UPDATE biodata`) when provided
-- device-side biometric capture trigger (`ENROLL_FP`) for face/fingerprint when requested
 
 Web UI page:
 
@@ -46,11 +45,32 @@ Web UI page:
 Endpoint:
 
 - `POST /api/zkteco/register-user`
+- `PUT /api/zkteco/device-users/{id}`
+- `DELETE /api/zkteco/device-users/{id}`
+- `POST /api/zkteco/sync-device-users`
 - `GET /api/zkteco/device-users-list`
 - `GET /api/zkteco/command-status/{device_sn}/{pin}`
-- `GET /api/zkteco/enrollment-status/{device_sn}/{pin}`
 - `GET /api/zkteco/known-devices`
 - `GET /api/zkteco/registration-stats`
+
+Web page behavior (`/register-user`):
+- command queue rows are merged per logical command, so `getrequest` + `service_control` duplicates appear as one line
+- user list now includes **Edit** and **Delete** actions
+- delete is queued to the device first; app-side removal happens only after a follow-up device user query confirms the PIN is absent
+- deleting an already-absent local user returns a non-error info response (`already_absent=true`) so stale UI rows do not cause hard failures
+
+Dashboard behavior (`/dashboard`):
+- the **Users** card and **Users** tab now use canonical records from `zkteco_device_users` (not only raw `tabledata/user` logs)
+- the **Users** tab is filtered by the latest full `querydata` user snapshot per device, so displayed users always match the machine-reported list
+- Users tab includes **Edit** and **Delete** actions
+- Users edit flow uses a single SweetAlert2 popup form (no browser prompt dialogs)
+- Users delete and sync actions use SweetAlert2 confirmation/toast dialogs (no browser alert/confirm)
+- Users tab includes **Sync From Device** button, which queues a `DATA QUERY tablename=user` command via `POST /api/zkteco/sync-device-users`
+- incoming device user uploads from `POST /iclock/cdata` (`tabledata/user`) and `POST /iclock/querydata` are upserted into `zkteco_device_users`
+- delete queue no longer hides users early; users remain visible in web until reconciliation confirms removal
+- delete acknowledgments trigger a follow-up `DATA QUERY tablename=user` reconciliation pass
+- user sync/delete command callbacks (including failures) can trigger reconciliation queries, so app state self-heals to machine state
+- sync status badges count only active profile sync command families (`user_sync`, `face_push`, `fingerprint_push`) and ignore delete/query legacy noise
 
 Example JSON payload:
 
@@ -64,9 +84,7 @@ Example JSON payload:
   "group_id": 1,
   "disabled": false,
   "face_template": "<base64-or-template-string>",
-  "fingerprint_template": "<base64-or-template-string>",
-  "enroll_face": true,
-  "enroll_fingerprint": false
+  "fingerprint_template": "<base64-or-template-string>"
 }
 ```
 
@@ -76,6 +94,8 @@ Command delivery:
 - command results are tracked from `POST /iclock/devicecmd` and `POST /iclock/service/control`
 - command statuses: `pending` → `sent` → `acked|failed`
 - max 3 commands are delivered per poll per channel
+- cross-channel duplicates are auto-resolved when one channel returns success ack
+- user deletion is queued with compatibility command variants for broader firmware support (`DATA DELETE ...`, `DELETE USER`, `DeleteUser`)
 
 Database tables used by this feature:
 - `zkteco_device_users` (upserted app-side user profile + optional face/fingerprint template fields)
@@ -106,7 +126,7 @@ Recommended (always uses PHP 8.2+):
 
 If you prefer calling PHP directly (Laragon/XAMPP):
 
-- `php artisan serve --host=0.0.0.0 --port=8000`
+- `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass; ./serve-php82.ps1 -BindHost 0.0.0.0 -Port 8000`
 
 If you want to tune the option response for `GET /iclock/cdata`, edit `config/zkteco.php`.
 

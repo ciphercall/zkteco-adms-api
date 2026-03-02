@@ -9,6 +9,7 @@ use App\Models\ZktecoRawLog;
 use App\Services\ZKTeco\DeviceCommandQueue;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 
 class UserRegistrationController extends Controller
 {
@@ -39,8 +40,6 @@ class UserRegistrationController extends Controller
             'disabled' => ['nullable', 'boolean'],
             'face_template' => ['nullable', 'string'],
             'fingerprint_template' => ['nullable', 'string'],
-            'enroll_face' => ['nullable', 'boolean'],
-            'enroll_fingerprint' => ['nullable', 'boolean'],
         ]);
 
         $user = $this->commandQueue->queueUserRegistration($validated);
@@ -63,6 +62,94 @@ class UserRegistrationController extends Controller
     }
 
     /**
+     * Update an existing app-side device user and queue sync commands.
+     */
+    public function update(Request $request, int $id): JsonResponse
+    {
+        $user = ZktecoDeviceUser::find($id);
+        if (! $user) {
+            return response()->json(['message' => 'User not found'], 404);
+        }
+
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'max:100'],
+            'privilege' => ['nullable', 'integer', 'min:0', 'max:14'],
+            'card_no' => ['nullable', 'string', 'max:50'],
+            'group_id' => ['nullable', 'integer', 'min:1', 'max:99'],
+            'disabled' => ['nullable', 'boolean'],
+            'face_template' => ['nullable', 'string'],
+            'fingerprint_template' => ['nullable', 'string'],
+        ]);
+
+        $payload = array_merge($validated, [
+            'device_sn' => $user->device_sn,
+            'pin' => (int) $user->pin,
+        ]);
+
+        $updatedUser = $this->commandQueue->queueUserRegistration($payload);
+
+        return response()->json([
+            'message' => 'User update queued for device sync',
+            'user' => [
+                'id' => $updatedUser->id,
+                'device_sn' => $updatedUser->device_sn,
+                'pin' => $updatedUser->pin,
+                'name' => $updatedUser->name,
+                'privilege' => $updatedUser->privilege,
+                'card_no' => $updatedUser->card_no,
+                'group_id' => $updatedUser->group_id,
+                'disabled' => $updatedUser->disabled,
+                'has_face_template' => ! empty($updatedUser->face_template),
+                'has_fingerprint_template' => ! empty($updatedUser->fingerprint_template),
+            ],
+        ]);
+    }
+
+    /**
+     * Queue deletion of a user on the device and remove locally once acked.
+     */
+    public function destroy(int $id): JsonResponse
+    {
+        $user = ZktecoDeviceUser::find($id);
+        if (! $user) {
+            return response()->json([
+                'message' => 'User already absent in local cache. Sync from device to confirm current machine users.',
+                'already_absent' => true,
+            ]);
+        }
+
+        $this->commandQueue->queueUserDeletion($user);
+
+        return response()->json([
+            'message' => 'User delete queued for device sync. Local record is removed after device user-list reconciliation confirms deletion.',
+            'user' => [
+                'id' => $user->id,
+                'device_sn' => $user->device_sn,
+                'pin' => $user->pin,
+                'name' => $user->name,
+            ],
+        ]);
+    }
+
+    /**
+     * Queue a full device user query to reconcile app-side users with machine users.
+     */
+    public function syncDeviceUsers(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'device_sn' => ['required', 'string', 'max:100'],
+        ]);
+
+        $deviceSn = trim((string) $validated['device_sn']);
+        $this->commandQueue->queueUsersQuery($deviceSn);
+
+        return response()->json([
+            'message' => 'Device user query queued. User list will update after device response.',
+            'device_sn' => $deviceSn,
+        ]);
+    }
+
+    /**
      * List all registered device users with their sync status.
      */
     public function deviceUsersList(Request $request): JsonResponse
@@ -77,13 +164,7 @@ class UserRegistrationController extends Controller
                 ->where('pin', $user->pin)
                 ->get();
 
-            $summary = [
-                'total' => $commands->count(),
-                'pending' => $commands->where('status', 'pending')->count(),
-                'sent' => $commands->where('status', 'sent')->count(),
-                'acked' => $commands->where('status', 'acked')->count(),
-                'failed' => $commands->where('status', 'failed')->count(),
-            ];
+            $summary = $this->summarizeCommandsForSync($commands);
 
             $syncStatus = 'pending';
             if ($summary['failed'] > 0) {
@@ -93,9 +174,6 @@ class UserRegistrationController extends Controller
             } elseif ($summary['sent'] > 0 || $summary['acked'] > 0) {
                 $syncStatus = 'syncing';
             }
-
-            $hasEnrollFace = $commands->contains(fn ($c) => str_contains($c->command_template, 'ENROLL_FP') && str_contains($c->command_template, 'FingerID=50'));
-            $hasEnrollFp = $commands->contains(fn ($c) => str_contains($c->command_template, 'ENROLL_FP') && str_contains($c->command_template, 'FingerID=0'));
 
             return [
                 'id' => $user->id,
@@ -108,8 +186,6 @@ class UserRegistrationController extends Controller
                 'disabled' => $user->disabled,
                 'created_at' => $user->created_at->toDateTimeString(),
                 'sync_status' => $syncStatus,
-                'face_requested' => $hasEnrollFace,
-                'fingerprint_requested' => $hasEnrollFp,
                 'command_summary' => $summary,
             ];
         });
@@ -129,59 +205,16 @@ class UserRegistrationController extends Controller
     public function commandStatus(string $device_sn, int $pin): JsonResponse
     {
         $commands = $this->commandQueue->getCommandsForUser($device_sn, $pin);
+        $rawCommands = ZktecoDeviceCommand::where('device_sn', $device_sn)
+            ->where('pin', $pin)
+            ->get();
+        $summary = $this->summarizeCommandsForSync($rawCommands);
 
         return response()->json([
             'device_sn' => $device_sn,
             'pin' => $pin,
             'commands' => $commands,
-            'summary' => [
-                'total' => $commands->count(),
-                'pending' => $commands->where('status', 'pending')->count(),
-                'sent' => $commands->where('status', 'sent')->count(),
-                'acked' => $commands->where('status', 'acked')->count(),
-                'failed' => $commands->where('status', 'failed')->count(),
-            ],
-        ]);
-    }
-
-    /**
-     * Check biometric enrollment status for a user.
-     */
-    public function enrollmentStatus(string $device_sn, int $pin): JsonResponse
-    {
-        $user = ZktecoDeviceUser::where('device_sn', $device_sn)
-            ->where('pin', $pin)
-            ->first();
-
-        if (! $user) {
-            return response()->json(['error' => 'User not found'], 404);
-        }
-
-        $commands = ZktecoDeviceCommand::where('device_sn', $device_sn)
-            ->where('pin', $pin)
-            ->get();
-
-        $faceCmd = $commands->first(fn ($c) => str_contains($c->command_template, 'ENROLL_FP') && str_contains($c->command_template, 'FingerID=50'));
-        $fpCmd = $commands->first(fn ($c) => str_contains($c->command_template, 'ENROLL_FP') && str_contains($c->command_template, 'FingerID=0'));
-
-        $faceUploaded = $this->checkBiometricUpload($device_sn, $pin, 'biophoto');
-        $fpUploaded = $this->checkBiometricUpload($device_sn, $pin, 'biodata');
-
-        return response()->json([
-            'face' => [
-                'requested' => $faceCmd !== null,
-                'command_status' => $faceCmd?->status,
-                'command_sent_at' => $faceCmd?->sent_at?->toDateTimeString(),
-                'command_acked_at' => $faceCmd?->acknowledged_at?->toDateTimeString(),
-                'data_uploaded' => $faceUploaded,
-            ],
-            'fingerprint' => [
-                'requested' => $fpCmd !== null,
-                'command_status' => $fpCmd?->status,
-                'command_sent_at' => $fpCmd?->sent_at?->toDateTimeString(),
-                'command_acked_at' => $fpCmd?->acknowledged_at?->toDateTimeString(),
-                'data_uploaded' => $fpUploaded,
-            ],
+            'summary' => $summary,
         ]);
     }
 
@@ -228,25 +261,91 @@ class UserRegistrationController extends Controller
     }
 
     /**
-     * Check if biometric data has been uploaded from device for a specific PIN.
+     * Build an effective per-user sync summary by collapsing channel duplicates.
+     *
+     * A single logical command may be queued for both getrequest and service_control.
+     * For UI sync flow we treat the command as complete when any channel is acked.
      */
-    private function checkBiometricUpload(string $deviceSn, int $pin, string $tablename): bool
+    private function summarizeCommandsForSync(Collection $commands): array
     {
-        $pinStr = (string) $pin;
-        $tab = "\t";
+        $summary = [
+            'total' => 0,
+            'pending' => 0,
+            'sent' => 0,
+            'acked' => 0,
+            'failed' => 0,
+        ];
 
-        return ZktecoRawLog::where('device_sn', $deviceSn)
-            ->where('endpoint', '/iclock/cdata')
-            ->where('method', 'POST')
-            ->where(function ($q) use ($tablename) {
-                $q->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(query_params, '$.tablename')) = ?", [$tablename]);
+        if ($commands->isEmpty()) {
+            return $summary;
+        }
+
+        $logicalGroups = $commands
+            ->sortByDesc('id')
+            ->groupBy(function ($command) {
+                return $this->logicalCommandKey((string) $command->command_template);
             })
-            ->where(function ($q) use ($pinStr, $tab) {
-                $q->where('raw_body', 'LIKE', "Pin={$pinStr}{$tab}%")
-                  ->orWhere('raw_body', 'LIKE', "%{$tab}Pin={$pinStr}{$tab}%")
-                  ->orWhere('raw_body', 'LIKE', "%{$tab}Pin={$pinStr}")
-                  ->orWhere('raw_body', 'LIKE', "%\nPin={$pinStr}{$tab}%");
-            })
-            ->exists();
+            ->map(fn ($group) => $group->first());
+
+        foreach ($logicalGroups as $command) {
+            $logicalKey = $this->logicalCommandKey((string) $command->command_template);
+            if (! in_array($logicalKey, ['user_sync', 'face_push', 'fingerprint_push'], true)) {
+                continue;
+            }
+
+            $summary['total']++;
+
+            $status = (string) $command->status;
+
+            if ($status === 'acked') {
+                $summary['acked']++;
+                continue;
+            }
+
+            if ($status === 'sent') {
+                $summary['sent']++;
+                continue;
+            }
+
+            if ($status === 'pending') {
+                $summary['pending']++;
+                continue;
+            }
+
+            if ($status === 'failed') {
+                $summary['failed']++;
+            }
+        }
+
+        return $summary;
     }
+
+    private function logicalCommandKey(string $template): string
+    {
+        $body = preg_replace('/^C:\{CMDID\}:/', '', $template);
+
+        if (str_contains($body, 'DATA UPDATE user')) {
+            return 'user_sync';
+        }
+        if (str_contains($body, 'DATA UPDATE biophoto')) {
+            return 'face_push';
+        }
+        if (str_contains($body, 'DATA UPDATE biodata')) {
+            return 'fingerprint_push';
+        }
+        if (
+            str_contains($body, 'DATA DELETE tablename=user')
+            || str_contains($body, 'DATA DELETE user')
+            || str_contains($body, 'DELETE USER')
+            || str_contains($body, 'DeleteUser')
+        ) {
+            return 'user_delete';
+        }
+        if (str_contains($body, 'DATA QUERY tablename=user')) {
+            return 'user_query';
+        }
+
+        return trim((string) $body);
+    }
+
 }

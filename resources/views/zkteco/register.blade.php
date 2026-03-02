@@ -6,6 +6,8 @@
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>ZKTeco ADMS — User Registration</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script>
@@ -81,7 +83,7 @@
                         </div>
                         <div>
                             <h1 class="text-lg font-semibold text-white">ZKTeco ADMS</h1>
-                            <p class="text-xs text-slate-400">User Registration &amp; Enrollment</p>
+                            <p class="text-xs text-slate-400">User Registration &amp; Sync</p>
                         </div>
                     </div>
                     <nav class="hidden md:flex items-center gap-1">
@@ -152,7 +154,7 @@
                 <div class="px-6 py-4 border-b border-slate-700/50 flex items-center justify-between">
                     <h2 class="text-base font-semibold text-white flex items-center gap-2">
                         <svg class="w-5 h-5 text-brand-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"/></svg>
-                        New User Registration
+                        <span id="form-title">New User Registration</span>
                     </h2>
                     <button onclick="resetWizard()" id="btn-reset" class="text-xs text-slate-500 hover:text-slate-300 transition-colors hidden">
                         ← Start Over
@@ -239,66 +241,9 @@
                                 </div>
                             </div>
 
-                            <!-- Divider -->
-                            <div class="border-t border-slate-700/50 my-6"></div>
-
-                            <!-- Biometric Enrollment Options -->
-                            <h3 class="text-sm font-semibold text-slate-300 mb-4 flex items-center gap-2">
-                                <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
-                                Biometric Enrollment Options
-                            </h3>
-                            <p class="text-xs text-slate-500 mb-4">Enable these to trigger biometric capture on the device. The user will need to visit the device in person.</p>
-
-                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
-                                <!-- Face Enrollment Toggle -->
-                                <div class="bg-slate-700/30 rounded-xl border border-slate-700/50 p-4 hover:border-cyan-500/30 transition-colors">
-                                    <div class="flex items-center justify-between">
-                                        <div class="flex items-center gap-3">
-                                            <div class="w-10 h-10 rounded-full bg-cyan-500/10 flex items-center justify-center">
-                                                <svg class="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                                                </svg>
-                                            </div>
-                                            <div>
-                                                <p class="text-sm font-medium text-white">Face Capture</p>
-                                                <p class="text-xs text-slate-500">Camera enrollment at device</p>
-                                            </div>
-                                        </div>
-                                        <label class="relative inline-flex items-center cursor-pointer">
-                                            <input type="checkbox" id="f-enroll-face" class="sr-only peer" checked>
-                                            <div class="toggle-track w-11 h-6 bg-slate-600 rounded-full peer-focus:ring-2 peer-focus:ring-brand-500/50">
-                                                <div class="toggle-thumb w-5 h-5 bg-white rounded-full absolute top-[2px] left-[2px] shadow"></div>
-                                            </div>
-                                        </label>
-                                    </div>
-                                </div>
-
-                                <!-- Fingerprint Enrollment Toggle -->
-                                <div class="bg-slate-700/30 rounded-xl border border-slate-700/50 p-4 hover:border-violet-500/30 transition-colors">
-                                    <div class="flex items-center justify-between">
-                                        <div class="flex items-center gap-3">
-                                            <div class="w-10 h-10 rounded-full bg-violet-500/10 flex items-center justify-center">
-                                                <svg class="w-5 h-5 text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.132A8 8 0 008 4.07M3 15.364c.64-1.319 1-2.8 1-4.364 0-1.457.39-2.823 1.07-4"/>
-                                                </svg>
-                                            </div>
-                                            <div>
-                                                <p class="text-sm font-medium text-white">Fingerprint Scan</p>
-                                                <p class="text-xs text-slate-500">Sensor enrollment at device</p>
-                                            </div>
-                                        </div>
-                                        <label class="relative inline-flex items-center cursor-pointer">
-                                            <input type="checkbox" id="f-enroll-fp" class="sr-only peer">
-                                            <div class="toggle-track w-11 h-6 bg-slate-600 rounded-full peer-focus:ring-2 peer-focus:ring-brand-500/50">
-                                                <div class="toggle-thumb w-5 h-5 bg-white rounded-full absolute top-[2px] left-[2px] shadow"></div>
-                                            </div>
-                                        </label>
-                                    </div>
-                                </div>
-                            </div>
-
                             <!-- Submit -->
                             <div class="flex items-center justify-end gap-3">
+                                <button type="button" id="btn-cancel-edit" onclick="cancelEditMode()" class="px-5 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-white hover:bg-slate-700 transition-colors hidden">Cancel Edit</button>
                                 <button type="button" onclick="resetWizard()" class="px-5 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-white hover:bg-slate-700 transition-colors">Cancel</button>
                                 <button type="submit" id="btn-submit" class="px-6 py-2.5 rounded-lg text-sm font-semibold text-white bg-brand-600 hover:bg-brand-500 shadow-lg shadow-brand-600/25 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
@@ -347,61 +292,6 @@
                                 <p class="text-xs text-slate-400">Commands are delivered when the device polls the server (typically every 30-60 seconds). Status updates automatically.</p>
                             </div>
 
-                            <!-- Enrollment Monitor (shown if enrollment requested) -->
-                            <div id="enrollment-section" class="hidden">
-                                <div class="border-t border-slate-700/50 my-6"></div>
-                                <h3 class="text-sm font-semibold text-slate-300 mb-4 flex items-center gap-2">
-                                    <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
-                                    Biometric Enrollment
-                                </h3>
-
-                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-                                    <!-- Face Card -->
-                                    <div id="enroll-face-card" class="bg-slate-700/20 rounded-xl border border-slate-700/50 p-5 text-center transition-all hidden">
-                                        <div class="w-16 h-16 mx-auto mb-3 rounded-full flex items-center justify-center transition-all" id="face-icon-ring">
-                                            <svg class="w-8 h-8" id="face-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                                            </svg>
-                                        </div>
-                                        <h4 class="text-sm font-semibold text-white mb-1">Face Capture</h4>
-                                        <div id="face-status-dots" class="flex items-center justify-center gap-1.5 mb-2">
-                                            <span class="w-1.5 h-1.5 rounded-full bg-amber-400 waiting-dot"></span>
-                                            <span class="w-1.5 h-1.5 rounded-full bg-amber-400 waiting-dot"></span>
-                                            <span class="w-1.5 h-1.5 rounded-full bg-amber-400 waiting-dot"></span>
-                                        </div>
-                                        <p class="text-xs text-slate-400" id="face-status-text">Waiting for device...</p>
-                                    </div>
-
-                                    <!-- Fingerprint Card -->
-                                    <div id="enroll-fp-card" class="bg-slate-700/20 rounded-xl border border-slate-700/50 p-5 text-center transition-all hidden">
-                                        <div class="w-16 h-16 mx-auto mb-3 rounded-full flex items-center justify-center transition-all" id="fp-icon-ring">
-                                            <svg class="w-8 h-8" id="fp-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.132A8 8 0 008 4.07M3 15.364c.64-1.319 1-2.8 1-4.364 0-1.457.39-2.823 1.07-4"/>
-                                            </svg>
-                                        </div>
-                                        <h4 class="text-sm font-semibold text-white mb-1">Fingerprint Scan</h4>
-                                        <div id="fp-status-dots" class="flex items-center justify-center gap-1.5 mb-2">
-                                            <span class="w-1.5 h-1.5 rounded-full bg-amber-400 waiting-dot"></span>
-                                            <span class="w-1.5 h-1.5 rounded-full bg-amber-400 waiting-dot"></span>
-                                            <span class="w-1.5 h-1.5 rounded-full bg-amber-400 waiting-dot"></span>
-                                        </div>
-                                        <p class="text-xs text-slate-400" id="fp-status-text">Waiting for device...</p>
-                                    </div>
-                                </div>
-
-                                <!-- Enrollment instructions -->
-                                <div class="bg-cyan-500/5 border border-cyan-500/10 rounded-lg p-4">
-                                    <p class="text-sm font-medium text-cyan-300 mb-2">Enrollment Instructions</p>
-                                    <ol class="text-xs text-slate-400 space-y-1 list-decimal list-inside">
-                                        <li>Go to the ZKTeco device (<span id="enroll-device-sn" class="font-mono text-slate-300">-</span>)</li>
-                                        <li>The device will enter enrollment mode when it receives the command</li>
-                                        <li>Follow the on-screen prompts — look at the camera for face, place finger on sensor for fingerprint</li>
-                                        <li>Wait for the confirmation beep and success message</li>
-                                        <li>This page will update automatically when enrollment data is received</li>
-                                    </ol>
-                                </div>
-                            </div>
-
                             <!-- Actions -->
                             <div class="flex items-center justify-between mt-6">
                                 <button onclick="goToStep(1)" class="px-4 py-2 rounded-lg text-sm font-medium text-slate-400 hover:text-white hover:bg-slate-700 transition-colors flex items-center gap-1">
@@ -435,8 +325,6 @@
                                     <div class="flex justify-between"><span class="text-slate-400">Name</span><span class="text-white font-medium" id="cpl-name">-</span></div>
                                     <div class="flex justify-between"><span class="text-slate-400">PIN</span><span class="text-white font-mono" id="cpl-pin">-</span></div>
                                     <div class="flex justify-between"><span class="text-slate-400">Device</span><span class="text-white font-mono text-xs" id="cpl-device">-</span></div>
-                                    <div class="flex justify-between"><span class="text-slate-400">Face Enrollment</span><span id="cpl-face">-</span></div>
-                                    <div class="flex justify-between"><span class="text-slate-400">Fingerprint</span><span id="cpl-fp">-</span></div>
                                 </div>
                             </div>
 
@@ -470,13 +358,12 @@
                                 <th class="py-3 px-4">Device</th>
                                 <th class="py-3 px-4">Privilege</th>
                                 <th class="py-3 px-4">Sync</th>
-                                <th class="py-3 px-4">Face</th>
-                                <th class="py-3 px-4">FP</th>
                                 <th class="py-3 px-4">Registered</th>
+                                <th class="py-3 px-4">Actions</th>
                             </tr>
                         </thead>
                         <tbody id="users-tbody" class="divide-y divide-slate-700/30">
-                            <tr><td colspan="8" class="py-8 text-center text-slate-500">Loading...</td></tr>
+                            <tr><td colspan="7" class="py-8 text-center text-slate-500">Loading...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -508,13 +395,12 @@
     // ═══════════════════════════════════════════════════════════════════
     let currentStep = 1;
     let registeredUser = null;
-    let enrollFaceRequested = false;
-    let enrollFpRequested = false;
     let knownDevices = [];
     let currentUsersPage = 1;
     let usersLastPage = 1;
     let pollTimerId = null;
-    let enrollPollTimerId = null;
+    let editingUserId = null;
+    let currentUsersMap = new Map();
 
     // ═══════════════════════════════════════════════════════════════════
     // Init
@@ -607,9 +493,11 @@
         document.getElementById('users-total-label').textContent = `${data.total ?? 0} users`;
 
         if (users.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="8" class="py-10 text-center text-slate-500"><div class="flex flex-col items-center gap-2"><svg class="w-8 h-8 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"/></svg><p>No users registered yet</p><p class="text-xs">Use the form above to register your first user</p></div></td></tr>';
+            tbody.innerHTML = '<tr><td colspan="7" class="py-10 text-center text-slate-500"><div class="flex flex-col items-center gap-2"><svg class="w-8 h-8 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"/></svg><p>No users registered yet</p><p class="text-xs">Use the form above to register your first user</p></div></td></tr>';
             return;
         }
+
+        currentUsersMap = new Map(users.map(u => [u.id, u]));
 
         tbody.innerHTML = users.map(u => {
             const initial = (u.name || '?').charAt(0).toUpperCase();
@@ -626,9 +514,13 @@
                     <td class="py-3 px-4 text-xs text-slate-400 font-mono">${u.device_sn}</td>
                     <td class="py-3 px-4">${privilegeBadge(u.privilege)}</td>
                     <td class="py-3 px-4">${syncBadge(u.sync_status)}</td>
-                    <td class="py-3 px-4">${enrollBadge(u.face_requested, u.sync_status === 'synced')}</td>
-                    <td class="py-3 px-4">${enrollBadge(u.fingerprint_requested, u.sync_status === 'synced')}</td>
                     <td class="py-3 px-4 text-xs text-slate-500">${timeAgo(u.created_at)}</td>
+                    <td class="py-3 px-4">
+                        <div class="flex items-center gap-2">
+                            <button onclick="editUser(${u.id})" class="px-2.5 py-1 rounded text-xs font-medium bg-brand-500/10 text-brand-300 hover:bg-brand-500/20">Edit</button>
+                            <button onclick="deleteUser(${u.id})" class="px-2.5 py-1 rounded text-xs font-medium bg-rose-500/10 text-rose-300 hover:bg-rose-500/20">Delete</button>
+                        </div>
+                    </td>
                 </tr>`;
         }).join('');
 
@@ -645,10 +537,10 @@
 
         const btn = document.getElementById('btn-submit');
         btn.disabled = true;
-        btn.innerHTML = '<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg> Registering...';
-
-        enrollFaceRequested = document.getElementById('f-enroll-face').checked;
-        enrollFpRequested = document.getElementById('f-enroll-fp').checked;
+        const isEditing = editingUserId !== null;
+        btn.innerHTML = isEditing
+            ? '<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg> Saving...'
+            : '<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg> Registering...';
 
         const payload = {
             device_sn: document.getElementById('f-device').value,
@@ -657,12 +549,13 @@
             privilege: parseInt(document.getElementById('f-privilege').value),
             card_no: document.getElementById('f-card').value.trim() || null,
             group_id: parseInt(document.getElementById('f-group').value) || 1,
-            enroll_face: enrollFaceRequested,
-            enroll_fingerprint: enrollFpRequested,
         };
 
-        const data = await api('register-user', {
-            method: 'POST',
+        const endpoint = isEditing ? `device-users/${editingUserId}` : 'register-user';
+        const method = isEditing ? 'PUT' : 'POST';
+
+        const data = await api(endpoint, {
+            method,
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
         });
@@ -677,11 +570,104 @@
         }
 
         registeredUser = data.user;
-        showToast(`${registeredUser.name} registered successfully!`, 'success');
+        showToast(isEditing ? `${registeredUser.name} update queued for sync` : `${registeredUser.name} registered successfully!`, 'success');
         loadStats();
         loadUsers(1);
         goToStep(2);
         startCommandPolling();
+
+        if (isEditing) {
+            clearEditMode();
+        }
+    }
+
+    function editUser(id) {
+        const user = currentUsersMap.get(id);
+        if (!user) return;
+
+        editingUserId = id;
+        document.getElementById('form-title').textContent = 'Edit User';
+        document.getElementById('btn-cancel-edit').classList.remove('hidden');
+
+        const deviceSelect = document.getElementById('f-device');
+        const pinInput = document.getElementById('f-pin');
+
+        deviceSelect.value = user.device_sn;
+        deviceSelect.disabled = true;
+        pinInput.value = user.pin;
+        pinInput.readOnly = true;
+
+        document.getElementById('f-name').value = user.name ?? '';
+        document.getElementById('f-privilege').value = String(user.privilege ?? 0);
+        document.getElementById('f-card').value = user.card_no ?? '';
+        document.getElementById('f-group').value = user.group_id ?? 1;
+
+        goToStep(1);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function clearEditMode() {
+        editingUserId = null;
+        document.getElementById('form-title').textContent = 'New User Registration';
+        document.getElementById('btn-cancel-edit').classList.add('hidden');
+        document.getElementById('f-device').disabled = false;
+        document.getElementById('f-pin').readOnly = false;
+    }
+
+    function cancelEditMode() {
+        clearEditMode();
+        resetWizard();
+    }
+
+    async function deleteUser(id) {
+        const user = currentUsersMap.get(id);
+        if (!user) return;
+
+        const confirmResult = await Swal.fire(swalTheme({
+            title: 'Queue User Delete?',
+            html: `
+                <div style="text-align:left;font-size:13px;line-height:1.7;">
+                    <div><strong>Name:</strong> ${escHtml(user.name || '-')}</div>
+                    <div><strong>PIN:</strong> ${user.pin || '-'}</div>
+                    <div><strong>Device:</strong> ${escHtml(user.device_sn || '-')}</div>
+                </div>
+                <p style="margin-top:10px;font-size:12px;color:#94a3b8;">Delete is queued to the device, then a user query runs to reconcile. The local record is removed only after the device no longer reports the user.</p>
+            `,
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonText: 'Yes, Queue Delete',
+            cancelButtonText: 'Cancel',
+            confirmButtonColor: '#e11d48',
+        }));
+
+        if (!confirmResult.isConfirmed) return;
+
+        const res = await api(`device-users/${id}`, { method: 'DELETE' });
+        if (!res) return;
+
+        if (res.already_absent) {
+            showToast('User already absent locally. Refreshing list.', 'info');
+        } else {
+            showToast('Delete queued. Record is removed after device reconciliation.', 'info');
+        }
+
+        if (editingUserId === id) {
+            clearEditMode();
+            resetWizard();
+        }
+
+        loadUsers(currentUsersPage);
+        loadStats();
+    }
+
+    function swalTheme(config = {}) {
+        return {
+            background: '#0f172a',
+            color: '#e2e8f0',
+            confirmButtonColor: '#2563eb',
+            cancelButtonColor: '#475569',
+            ...config,
+        };
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -760,37 +746,12 @@
         document.getElementById('sync-name').textContent = u.name;
         document.getElementById('sync-pin').textContent = u.pin;
         document.getElementById('sync-device').textContent = u.device_sn;
-        document.getElementById('enroll-device-sn').textContent = u.device_sn;
-
-        // Show enrollment section if requested
-        const enrollSection = document.getElementById('enrollment-section');
-        const faceCard = document.getElementById('enroll-face-card');
-        const fpCard = document.getElementById('enroll-fp-card');
-
-        if (enrollFaceRequested || enrollFpRequested) {
-            enrollSection.classList.remove('hidden');
-            faceCard.classList.toggle('hidden', !enrollFaceRequested);
-            fpCard.classList.toggle('hidden', !enrollFpRequested);
-
-            if (enrollFaceRequested) {
-                setEnrollCardWaiting('face');
-            }
-            if (enrollFpRequested) {
-                setEnrollCardWaiting('fp');
-            }
-        } else {
-            enrollSection.classList.add('hidden');
-        }
     }
 
     function startCommandPolling() {
         if (!registeredUser) return;
         pollCommands(); // immediate first call
         pollTimerId = setInterval(pollCommands, 3000);
-
-        if (enrollFaceRequested || enrollFpRequested) {
-            enrollPollTimerId = setInterval(pollEnrollment, 5000);
-        }
     }
 
     async function pollCommands() {
@@ -809,11 +770,8 @@
         } else if (s.acked === s.total && s.total > 0) {
             badge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400';
             badge.textContent = 'ALL SYNCED';
-            // If no enrollment requested, auto-advance after a beat
-            if (!enrollFaceRequested && !enrollFpRequested) {
-                clearInterval(pollTimerId);
-                setTimeout(() => goToStep(3), 1500);
-            }
+            clearInterval(pollTimerId);
+            setTimeout(() => goToStep(3), 1500);
         } else if (s.sent > 0 || s.acked > 0) {
             badge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-brand-500/10 text-brand-400';
             badge.textContent = 'SYNCING';
@@ -828,16 +786,18 @@
 
     function renderCommandList(commands) {
         const container = document.getElementById('cmd-list');
-        if (commands.length === 0) {
+        const mergedCommands = mergeCommandsForView(commands || []);
+
+        if (mergedCommands.length === 0) {
             container.innerHTML = '<p class="text-sm text-slate-500 py-4">No commands found</p>';
             return;
         }
 
-        container.innerHTML = commands.map(cmd => {
+        container.innerHTML = mergedCommands.map(cmd => {
             const icon = statusIcon(cmd.status);
             const badge = statusBadge(cmd.status);
             const typeLabel = commandTypeLabel(cmd.type);
-            const channelLabel = cmd.channel === 'service_control' ? 'service' : cmd.channel;
+            const channelLabel = cmd.channels.map(ch => ch === 'service_control' ? 'service' : ch).join('+');
             let timeInfo = '';
             if (cmd.acknowledged_at) timeInfo = `Acked: ${formatTime(cmd.acknowledged_at)}`;
             else if (cmd.sent_at) timeInfo = `Sent: ${formatTime(cmd.sent_at)}`;
@@ -860,84 +820,54 @@
         }).join('');
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    // Enrollment Polling
-    // ═══════════════════════════════════════════════════════════════════
-    async function pollEnrollment() {
-        if (!registeredUser) return;
-        const data = await api(`enrollment-status/${registeredUser.device_sn}/${registeredUser.pin}`);
-        if (!data) return;
+    function mergeCommandsForView(commands) {
+        const grouped = [];
+        const windowMs = 15000;
 
-        if (data.face && enrollFaceRequested) {
-            if (data.face.data_uploaded) {
-                setEnrollCardSuccess('face');
-            } else if (data.face.command_status === 'acked') {
-                setEnrollCardActive('face', 'Device in enrollment mode — look at camera');
-            } else if (data.face.command_status === 'sent') {
-                setEnrollCardActive('face', 'Command sent to device...');
+        for (const cmd of commands) {
+            const key = `${cmd.type}::${cmd.command}`;
+            const ts = cmd.created_at ? new Date(cmd.created_at).getTime() : 0;
+
+            const existing = grouped.find(item =>
+                item.key === key &&
+                Math.abs(item.created_ts - ts) <= windowMs &&
+                !item.channels.includes(cmd.channel)
+            );
+
+            if (!existing) {
+                grouped.push({
+                    key,
+                    type: cmd.type,
+                    command: cmd.command,
+                    status: cmd.status,
+                    channels: [cmd.channel],
+                    sent_at: cmd.sent_at,
+                    acknowledged_at: cmd.acknowledged_at,
+                    created_at: cmd.created_at,
+                    created_ts: ts,
+                });
+                continue;
             }
+
+            existing.channels = Array.from(new Set([...existing.channels, cmd.channel]));
+            existing.status = mergeStatus(existing.status, cmd.status);
+            existing.sent_at = pickLatestTime(existing.sent_at, cmd.sent_at);
+            existing.acknowledged_at = pickLatestTime(existing.acknowledged_at, cmd.acknowledged_at);
+            existing.created_at = pickLatestTime(existing.created_at, cmd.created_at);
         }
 
-        if (data.fingerprint && enrollFpRequested) {
-            if (data.fingerprint.data_uploaded) {
-                setEnrollCardSuccess('fp');
-            } else if (data.fingerprint.command_status === 'acked') {
-                setEnrollCardActive('fp', 'Device in enrollment mode — place finger on sensor');
-            } else if (data.fingerprint.command_status === 'sent') {
-                setEnrollCardActive('fp', 'Command sent to device...');
-            }
-        }
-
-        // Check if all enrollment is complete
-        const faceOk = !enrollFaceRequested || (data.face && data.face.data_uploaded);
-        const fpOk = !enrollFpRequested || (data.fingerprint && data.fingerprint.data_uploaded);
-        if (faceOk && fpOk) {
-            stopAllPolling();
-            showToast('Biometric enrollment complete!', 'success');
-            setTimeout(() => goToStep(3), 1500);
-        }
+        return grouped.map(({ key: _key, created_ts: _createdTs, ...item }) => item);
     }
 
-    function setEnrollCardWaiting(type) {
-        const prefix = type === 'face' ? 'face' : 'fp';
-        const ring = document.getElementById(`${prefix}-icon-ring`);
-        const icon = document.getElementById(`${prefix}-icon`);
-        const dots = document.getElementById(`${prefix}-status-dots`);
-        const text = document.getElementById(`${prefix}-status-text`);
-
-        ring.className = 'w-16 h-16 mx-auto mb-3 rounded-full flex items-center justify-center bg-amber-500/10 transition-all';
-        icon.setAttribute('class', 'w-8 h-8 text-amber-400');
-        dots.classList.remove('hidden');
-        text.textContent = 'Waiting for device...';
-        text.className = 'text-xs text-slate-400';
+    function mergeStatus(a, b) {
+        const rank = { pending: 1, sent: 2, failed: 3, acked: 4 };
+        return (rank[b] ?? 0) > (rank[a] ?? 0) ? b : a;
     }
 
-    function setEnrollCardActive(type, message) {
-        const prefix = type === 'face' ? 'face' : 'fp';
-        const ring = document.getElementById(`${prefix}-icon-ring`);
-        const icon = document.getElementById(`${prefix}-icon`);
-        const text = document.getElementById(`${prefix}-status-text`);
-
-        ring.className = 'w-16 h-16 mx-auto mb-3 rounded-full flex items-center justify-center bg-cyan-500/10 animate-pulse transition-all';
-        icon.setAttribute('class', 'w-8 h-8 text-cyan-400');
-        text.textContent = message;
-        text.className = 'text-xs text-cyan-300';
-    }
-
-    function setEnrollCardSuccess(type) {
-        const prefix = type === 'face' ? 'face' : 'fp';
-        const ring = document.getElementById(`${prefix}-icon-ring`);
-        const dots = document.getElementById(`${prefix}-status-dots`);
-        const text = document.getElementById(`${prefix}-status-text`);
-        const card = document.getElementById(`enroll-${prefix}-card`);
-
-        ring.className = 'w-16 h-16 mx-auto mb-3 rounded-full flex items-center justify-center bg-emerald-500/10 transition-all';
-        ring.innerHTML = '<svg class="w-8 h-8 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>';
-        dots.classList.add('hidden');
-        text.textContent = 'Enrolled successfully!';
-        text.className = 'text-xs text-emerald-400 font-medium';
-        card.classList.remove('border-slate-700/50');
-        card.classList.add('border-emerald-500/30');
+    function pickLatestTime(a, b) {
+        if (!a) return b;
+        if (!b) return a;
+        return new Date(a) >= new Date(b) ? a : b;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -949,12 +879,6 @@
         document.getElementById('cpl-name').textContent = u.name;
         document.getElementById('cpl-pin').textContent = u.pin;
         document.getElementById('cpl-device').textContent = u.device_sn;
-        document.getElementById('cpl-face').innerHTML = enrollFaceRequested
-            ? '<span class="text-xs text-cyan-400">Requested</span>'
-            : '<span class="text-xs text-slate-500">Not requested</span>';
-        document.getElementById('cpl-fp').innerHTML = enrollFpRequested
-            ? '<span class="text-xs text-violet-400">Requested</span>'
-            : '<span class="text-xs text-slate-500">Not requested</span>';
         document.getElementById('complete-summary').textContent =
             `${u.name} (PIN: ${u.pin}) → ${u.device_sn}`;
 
@@ -969,13 +893,10 @@
     function resetWizard() {
         stopAllPolling();
         registeredUser = null;
-        enrollFaceRequested = false;
-        enrollFpRequested = false;
+        clearEditMode();
 
         // Reset form
         document.getElementById('reg-form').reset();
-        document.getElementById('f-enroll-face').checked = true;
-        document.getElementById('f-enroll-fp').checked = false;
         hideErrors();
 
         // Go to step 1
@@ -991,7 +912,6 @@
 
     function stopAllPolling() {
         if (pollTimerId) { clearInterval(pollTimerId); pollTimerId = null; }
-        if (enrollPollTimerId) { clearInterval(enrollPollTimerId); enrollPollTimerId = null; }
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -1070,9 +990,7 @@
             user_sync: 'User Data Sync',
             face_push: 'Face Template Push',
             fingerprint_push: 'Fingerprint Template Push',
-            face_enroll: 'Face Enrollment Trigger',
-            fingerprint_enroll: 'Fingerprint Enrollment Trigger',
-            enroll: 'Enrollment Trigger',
+            user_delete: 'User Delete',
             other: 'Command',
         };
         return map[type] || type;
@@ -1087,12 +1005,6 @@
         };
         const [cls, label] = map[status] || map.pending;
         return `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${cls}">${label}</span>`;
-    }
-
-    function enrollBadge(requested, synced) {
-        if (!requested) return '<span class="text-[10px] text-slate-600">—</span>';
-        if (synced) return '<span class="text-[10px] text-emerald-400 font-medium">✓</span>';
-        return '<span class="text-[10px] text-amber-400 font-medium">⏳</span>';
     }
 
     function privilegeBadge(priv) {

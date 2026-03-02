@@ -3,9 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>ZKTeco ADMS Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script>
@@ -32,6 +35,16 @@
         .stat-card:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,.3); }
         .stat-card { transition: all .2s ease; }
         .tab-active { border-bottom: 2px solid #3b82f6; color: #3b82f6; }
+        .swal2-popup .swal2-input,
+        .swal2-popup .swal2-select {
+            background: #0b1220 !important;
+            color: #e2e8f0 !important;
+            border: 1px solid #334155 !important;
+        }
+        .swal2-popup select.swal-dark-select option {
+            background: #0b1220;
+            color: #e2e8f0;
+        }
     </style>
 </head>
 <body class="h-full bg-slate-900 text-slate-200 font-sans">
@@ -262,19 +275,29 @@
 
                     <!-- Users Tab -->
                     <div id="panel-users" class="tab-panel hidden">
+                        <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
+                            <p class="text-xs text-slate-400">User records are sourced from the canonical app sync table and include device sync status.</p>
+                            <div class="flex items-center gap-2">
+                                <select id="users-device-sync" class="bg-slate-700 border border-slate-600 rounded-lg px-3 py-1.5 text-xs text-slate-300"></select>
+                                <button onclick="syncUsersFromDevice()" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-brand-600 hover:bg-brand-500 text-white">Sync From Device</button>
+                            </div>
+                        </div>
                         <div class="overflow-x-auto">
                             <table class="w-full text-sm">
                                 <thead>
                                     <tr class="text-left text-xs font-medium text-slate-400 uppercase tracking-wider border-b border-slate-700/50">
+                                        <th class="pb-3 pr-4">Device</th>
                                         <th class="pb-3 pr-4">PIN</th>
                                         <th class="pb-3 pr-4">Name</th>
                                         <th class="pb-3 pr-4">Privilege</th>
                                         <th class="pb-3 pr-4">Card</th>
-                                        <th class="pb-3">Synced At</th>
+                                        <th class="pb-3 pr-4">Sync</th>
+                                        <th class="pb-3 pr-4">Synced At</th>
+                                        <th class="pb-3">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody id="users-tbody" class="divide-y divide-slate-700/30">
-                                    <tr><td colspan="5" class="py-8 text-center text-slate-500">Loading...</td></tr>
+                                    <tr><td colspan="8" class="py-8 text-center text-slate-500">Loading...</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -375,6 +398,7 @@
     let uploadChart = null;
     let timelineChart = null;
     let autoRefreshInterval = null;
+    let knownDevicesForSync = [];
 
     // ─── Init ────────────────────────────────────────────────────────────────
     document.addEventListener('DOMContentLoaded', () => {
@@ -393,15 +417,132 @@
     }
 
     // ─── API Calls ───────────────────────────────────────────────────────────
-    async function api(path) {
+    async function api(path, options = {}) {
+        const { showErrorToast = false, ...fetchOptions } = options;
+
         try {
-            const res = await fetch('/api/zkteco/' + path);
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            return await res.json();
-        } catch(e) {
+            const res = await fetch('/api/zkteco/' + path, {
+                headers: {
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                    ...(fetchOptions.headers || {}),
+                },
+                ...fetchOptions,
+            });
+
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                const msg = body?.message || `Request failed (HTTP ${res.status})`;
+                throw new Error(msg);
+            }
+
+            return body;
+        } catch (e) {
+            if (showErrorToast) {
+                toast((e && e.message) ? e.message : 'Request failed', 'error');
+            }
             console.error('API error:', path, e);
             return null;
         }
+    }
+
+    function swalTheme(config = {}) {
+        return {
+            background: '#0f172a',
+            color: '#e2e8f0',
+            confirmButtonColor: '#2563eb',
+            cancelButtonColor: '#475569',
+            ...config,
+        };
+    }
+
+    function toast(message, icon = 'success') {
+        return Swal.fire(swalTheme({
+            toast: true,
+            position: 'top-end',
+            showConfirmButton: false,
+            timer: 2800,
+            timerProgressBar: true,
+            icon,
+            title: message,
+        }));
+    }
+
+    function validatePrivilege(value) {
+        const allowed = [0, 2, 6, 14];
+        const parsed = Number(value);
+        return allowed.includes(parsed) ? parsed : null;
+    }
+
+    async function runEditWizard(user) {
+        const formResult = await Swal.fire(swalTheme({
+            title: 'Edit User',
+            html: `
+                <div style="text-align:left;font-size:13px;line-height:1.6;display:grid;gap:10px;">
+                    <div style="font-size:12px;color:#94a3b8;">Device: ${user.device_sn || '-'} • PIN: ${user.pin || '-'}</div>
+                    <div>
+                        <label style="display:block;margin-bottom:4px;color:#94a3b8;">Name</label>
+                        <input id="swal-edit-name" class="swal2-input" style="margin:0;width:100%;" value="${String(user.name || '').replace(/"/g, '&quot;')}">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:4px;color:#94a3b8;">Privilege</label>
+                        <select id="swal-edit-privilege" class="swal2-input swal-dark-select" style="margin:0;width:100%;">
+                            <option value="0">User</option>
+                            <option value="2">Enroller</option>
+                            <option value="6">Admin</option>
+                            <option value="14">Super Admin</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:4px;color:#94a3b8;">Card Number (optional)</label>
+                        <input id="swal-edit-card" class="swal2-input" style="margin:0;width:100%;" value="${String(user.card || '').replace(/"/g, '&quot;')}">
+                    </div>
+                    <div>
+                        <label style="display:block;margin-bottom:4px;color:#94a3b8;">Group ID (1-99)</label>
+                        <input id="swal-edit-group" type="number" min="1" max="99" step="1" class="swal2-input" style="margin:0;width:100%;" value="${String(user.group || '1').replace(/"/g, '&quot;')}">
+                    </div>
+                </div>
+            `,
+            showCancelButton: true,
+            confirmButtonText: 'Queue Update',
+            cancelButtonText: 'Cancel',
+            didOpen: () => {
+                const privilegeEl = document.getElementById('swal-edit-privilege');
+                if (privilegeEl) privilegeEl.value = String(privilegeCode(user.privilege));
+            },
+            preConfirm: () => {
+                const name = String(document.getElementById('swal-edit-name')?.value || '').trim();
+                const privilegeRaw = document.getElementById('swal-edit-privilege')?.value;
+                const cardNo = String(document.getElementById('swal-edit-card')?.value || '').trim();
+                const groupRaw = document.getElementById('swal-edit-group')?.value;
+
+                if (!name) {
+                    Swal.showValidationMessage('Name is required');
+                    return false;
+                }
+
+                const privilege = validatePrivilege(privilegeRaw);
+                if (privilege === null) {
+                    Swal.showValidationMessage('Choose a valid privilege');
+                    return false;
+                }
+
+                const groupId = Number(groupRaw);
+                if (!Number.isInteger(groupId) || groupId < 1 || groupId > 99) {
+                    Swal.showValidationMessage('Group ID must be between 1 and 99');
+                    return false;
+                }
+
+                return {
+                    name,
+                    privilege,
+                    card_no: cardNo || null,
+                    group_id: groupId,
+                };
+            },
+        }));
+
+        return formResult.isConfirmed ? formResult.value : null;
     }
 
     // ─── Stats ───────────────────────────────────────────────────────────────
@@ -410,6 +551,8 @@
         if (!data) return;
 
         const devices = data.devices || [];
+        knownDevicesForSync = devices.map(d => d.sn).filter(Boolean);
+        renderUsersSyncDeviceSelect();
         const onlineCount = devices.filter(d => d.is_online).length;
         document.getElementById('stat-devices').textContent = devices.length;
         document.getElementById('stat-devices-online').textContent = `${onlineCount} online`;
@@ -573,15 +716,23 @@
         document.getElementById('stat-users').textContent = data.total ?? users.length;
 
         if (users.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" class="py-8 text-center text-slate-500">No users synced from device</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" class="py-8 text-center text-slate-500">No users synced from device</td></tr>';
         } else {
             tbody.innerHTML = users.map(u => `
                 <tr class="hover:bg-slate-700/30 transition-colors">
+                    <td class="py-2.5 pr-4 text-xs text-slate-400 font-mono">${u.device_sn || '-'}</td>
                     <td class="py-2.5 pr-4 font-mono text-sm text-slate-300">${u.pin}</td>
                     <td class="py-2.5 pr-4 text-white font-medium">${u.name || '<span class="text-slate-500 italic">unnamed</span>'}</td>
                     <td class="py-2.5 pr-4">${privilegeBadge(u.privilege)}</td>
                     <td class="py-2.5 pr-4 text-xs text-slate-400 font-mono">${u.card || '-'}</td>
-                    <td class="py-2.5 text-xs text-slate-500">${u.synced_at}</td>
+                    <td class="py-2.5 pr-4">${syncBadge(u.sync_status)}</td>
+                    <td class="py-2.5 pr-4 text-xs text-slate-500">${u.synced_at || '-'}</td>
+                    <td class="py-2.5 text-xs">
+                        <div class="flex items-center gap-2">
+                            <button onclick="editDashboardUser(${u.id})" class="px-2 py-0.5 rounded bg-brand-500/10 text-brand-300 hover:bg-brand-500/20">Edit</button>
+                            <button onclick="deleteDashboardUser(${u.id}, '${u.name ? String(u.name).replace(/'/g, "\\'") : ''}', '${u.device_sn || ''}', '${u.pin || ''}')" class="px-2 py-0.5 rounded bg-rose-500/10 text-rose-300 hover:bg-rose-500/20">Delete</button>
+                        </div>
+                    </td>
                 </tr>
             `).join('');
         }
@@ -814,6 +965,124 @@
             'User': 'bg-slate-600/50 text-slate-300',
         };
         return `<span class="inline-flex px-2 py-0.5 rounded text-xs font-medium ${map[priv] || 'bg-slate-600 text-slate-300'}">${priv}</span>`;
+    }
+
+    function syncBadge(status) {
+        const map = {
+            pending: ['bg-slate-600/50 text-slate-300', '◯ Pending'],
+            syncing: ['bg-brand-500/10 text-brand-400', '↻ Syncing'],
+            synced: ['bg-emerald-500/10 text-emerald-400', '✓ Synced'],
+            failed: ['bg-rose-500/10 text-rose-400', '✕ Failed'],
+        };
+        const [cls, label] = map[status] || map.pending;
+        return `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${cls}">${label}</span>`;
+    }
+
+    function renderUsersSyncDeviceSelect() {
+        const select = document.getElementById('users-device-sync');
+        if (!select) return;
+
+        select.innerHTML = '';
+        if ((knownDevicesForSync || []).length === 0) {
+            select.innerHTML = '<option value="">No devices</option>';
+            return;
+        }
+
+        knownDevicesForSync.forEach((sn, index) => {
+            const opt = document.createElement('option');
+            opt.value = sn;
+            opt.textContent = sn;
+            if (index === 0) opt.selected = true;
+            select.appendChild(opt);
+        });
+    }
+
+    async function syncUsersFromDevice() {
+        const deviceSn = document.getElementById('users-device-sync').value;
+        if (!deviceSn) {
+            toast('No device selected', 'warning');
+            return;
+        }
+
+        const res = await api('sync-device-users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ device_sn: deviceSn }),
+            showErrorToast: true,
+        });
+
+        if (!res) return;
+
+        toast('Device user query queued. Waiting for device response.', 'success');
+        refreshAll();
+    }
+
+    async function editDashboardUser(id) {
+        const listData = await api(`users?page=${currentUsersPage}&per_page=25`);
+        if (!listData) return;
+        const user = (listData.users || []).find(u => Number(u.id) === Number(id));
+        if (!user) {
+            toast('User record was not found on this page', 'warning');
+            return;
+        }
+
+        const payload = await runEditWizard(user);
+        if (!payload) return;
+
+        const res = await api(`device-users/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            showErrorToast: true,
+        });
+
+        if (!res) return;
+
+        toast('User update queued for device sync', 'success');
+        refreshAll();
+    }
+
+    async function deleteDashboardUser(id, name, deviceSn, pin) {
+        const confirmResult = await Swal.fire(swalTheme({
+            title: 'Queue User Delete?',
+            html: `
+                <div style="text-align:left;font-size:13px;line-height:1.7;">
+                    <div><strong>Name:</strong> ${name || '-'}</div>
+                    <div><strong>PIN:</strong> ${pin || '-'}</div>
+                    <div><strong>Device:</strong> ${deviceSn || '-'}</div>
+                </div>
+                <p style="margin-top:10px;font-size:12px;color:#94a3b8;">Delete is queued first, then users are reconciled from the device list. The user is removed locally only after the device no longer reports that PIN.</p>
+            `,
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonText: 'Yes, Queue Delete',
+            cancelButtonText: 'Cancel',
+            confirmButtonColor: '#e11d48',
+        }));
+        if (!confirmResult.isConfirmed) return;
+
+        const res = await api(`device-users/${id}`, {
+            method: 'DELETE',
+            showErrorToast: true,
+        });
+        if (!res) return;
+
+        if (res.already_absent) {
+            toast('User already absent locally. Refreshing from current data.', 'info');
+        } else {
+            toast('User delete queued. Local record removes after device reconciliation.', 'success');
+        }
+        refreshAll();
+    }
+
+    function privilegeCode(label) {
+        const map = {
+            'User': 0,
+            'Enroller': 2,
+            'Admin': 6,
+            'Super Admin': 14,
+        };
+        return Object.prototype.hasOwnProperty.call(map, label) ? map[label] : 0;
     }
 
     function formatTime(dt) {

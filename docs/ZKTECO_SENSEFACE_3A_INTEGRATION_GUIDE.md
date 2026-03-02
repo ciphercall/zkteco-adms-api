@@ -489,7 +489,7 @@ zkteco-adms-api/
 │   ├── Http/Controllers/ZKTeco/
 │   │   ├── AdmsController.php       # ADMS protocol handler
 │   │   ├── DashboardController.php  # Dashboard & API
-│   │   └── UserRegistrationController.php  # App-side enrollment API
+│   │   └── UserRegistrationController.php  # App-side registration/sync API
 │   ├── Services/ZKTeco/
 │   │   └── DeviceCommandQueue.php   # Persistent device command queue
 │   └── Models/
@@ -505,7 +505,7 @@ zkteco-adms-api/
 │   └── 2026_03_02_000003_add_pin_to_zkteco_device_commands_table.php
 ├── resources/views/zkteco/
 │   ├── dashboard.blade.php          # Dashboard UI
-│   └── register.blade.php           # User registration + enrollment wizard UI
+│   └── register.blade.php           # User registration + sync wizard UI
 └── routes/
     ├── web.php                      # ADMS + dashboard + registration page routes
     └── api.php                      # register-user + status APIs
@@ -551,22 +551,24 @@ Route::prefix('iclock')->group(function () {
 
 **Important**: The `{any}` fallback route MUST be last. It catches double-path bugs and unknown endpoints.
 
-### 7.2.1 Routes (`routes/api.php`) — App-side user enrollment
+### 7.2.1 Routes (`routes/api.php`) — App-side user registration/sync
 
 ```php
 use App\Http\Controllers\ZKTeco\UserRegistrationController;
 
 Route::post('/zkteco/register-user', [UserRegistrationController::class, 'store']);
+Route::put('/zkteco/device-users/{id}', [UserRegistrationController::class, 'update']);
+Route::delete('/zkteco/device-users/{id}', [UserRegistrationController::class, 'destroy']);
+Route::post('/zkteco/sync-device-users', [UserRegistrationController::class, 'syncDeviceUsers']);
 Route::get('/zkteco/device-users-list', [UserRegistrationController::class, 'deviceUsersList']);
 Route::get('/zkteco/command-status/{device_sn}/{pin}', [UserRegistrationController::class, 'commandStatus']);
-Route::get('/zkteco/enrollment-status/{device_sn}/{pin}', [UserRegistrationController::class, 'enrollmentStatus']);
 Route::get('/zkteco/known-devices', [UserRegistrationController::class, 'knownDevices']);
 Route::get('/zkteco/registration-stats', [UserRegistrationController::class, 'registrationStats']);
 ```
 
 Request validation rules implemented by the endpoint:
 - required: `device_sn`, `pin`, `name`
-- optional: `privilege`, `card_no`, `group_id`, `disabled`, `face_template`, `fingerprint_template`, `enroll_face`, `enroll_fingerprint`
+- optional: `privilege`, `card_no`, `group_id`, `disabled`, `face_template`, `fingerprint_template`
 
 ### 7.3 CSRF Exemption
 
@@ -866,9 +868,9 @@ GET /register-user
 A self-contained Blade page using Tailwind CSS that provides:
 - 3-step registration wizard (User Info → Device Sync → Complete)
 - device selector (from known device SNs seen in raw logs)
-- enrollment toggles for face/fingerprint prompt on device
 - real-time command queue timeline (`pending|sent|acked|failed`)
-- enrollment status monitor (checks command ack + uploaded biometric data)
+- merged logical command rows across `getrequest` and `service_control` channels
+- user edit and delete actions in the registered users table
 - paginated table of app-registered users and sync status
 
 ### 9.2 Dashboard API Endpoints
@@ -883,12 +885,27 @@ All JSON APIs are at `/api/zkteco/*`:
 | GET | `/api/zkteco/users` | Users synced from device |
 | GET | `/api/zkteco/raw-logs?page=1&per_page=25` | Paginated raw logs browser |
 | GET | `/api/zkteco/timeline?hours=24` | Activity data for timeline chart |
-| POST | `/api/zkteco/register-user` | Register app-side user + queue sync/enrollment commands |
+| POST | `/api/zkteco/register-user` | Register app-side user + queue sync commands |
+| PUT | `/api/zkteco/device-users/{id}` | Update an app-side registered user and queue sync commands |
+| DELETE | `/api/zkteco/device-users/{id}` | Queue user delete on device; local record is removed after query reconciliation confirms deletion |
+| POST | `/api/zkteco/sync-device-users` | Queue full user query command (`DATA QUERY tablename=user`) for device→app reconciliation |
 | GET | `/api/zkteco/device-users-list` | Paginated app-side registered users with sync summary |
 | GET | `/api/zkteco/command-status/{device_sn}/{pin}` | Command timeline for a specific user/device |
-| GET | `/api/zkteco/enrollment-status/{device_sn}/{pin}` | Face/fingerprint enrollment state for a specific user |
 | GET | `/api/zkteco/known-devices` | Known device serial numbers from raw logs |
 | GET | `/api/zkteco/registration-stats` | Registration page stats cards |
+
+Users tab behavior on `/dashboard`:
+- source of truth is `zkteco_device_users` (canonical synced table)
+- displayed users are filtered against the latest full `querydata` user snapshot per device, so dashboard users match machine-reported users
+- supports **Edit** and **Delete** actions
+- edit uses a single SweetAlert2 popup form (name, privilege, card, group)
+- delete and sync actions use SweetAlert2 confirm + toast dialogs (no browser `alert/confirm/prompt`)
+- supports **Sync From Device** action to queue `DATA QUERY tablename=user`
+- upserts users from both `POST /iclock/cdata` (`tabledata/user`) and `POST /iclock/querydata`
+- users are not hidden early on delete intent; they remain visible until reconciliation confirms removal
+- delete acknowledgments trigger a follow-up `DATA QUERY tablename=user` reconciliation cycle
+- user sync/delete callbacks (including failures) can queue reconciliation queries to keep app state aligned with device state
+- sync badges are computed from active profile-sync command families only (`user_sync`, `face_push`, `fingerprint_push`)
 
 ### 9.3 Stats API Response Example
 
@@ -1015,7 +1032,7 @@ public function getRequest(Request $request)
 
 ### 10.5 App-side Registration Queue (Implemented in this project)
 
-This project now includes a persistent command queue for app-side user enrollment.
+This project includes a persistent command queue for app-side user sync.
 
 Flow:
 1. App calls `POST /api/zkteco/register-user`
@@ -1024,22 +1041,30 @@ Flow:
     - `DATA UPDATE user`
     - `DATA UPDATE biophoto` (if `face_template` is present)
     - `DATA UPDATE biodata` (if `fingerprint_template` is present)
-    - `ENROLL_FP Pin={pin} FingerID=50` (if `enroll_face=true`)
-    - `ENROLL_FP Pin={pin} FingerID=0` (if `enroll_fingerprint=true`)
-4. Device receives queued lines on polling endpoints:
+4. User updates use `PUT /api/zkteco/device-users/{id}` and queue fresh sync commands
+5. User deletes use `DELETE /api/zkteco/device-users/{id}` and queue `DATA DELETE tablename=user,filter=pin=<pin>`
+6. Full user reconciliation can be triggered via `POST /api/zkteco/sync-device-users`
+7. Device receives queued lines on polling endpoints:
     - `GET /iclock/getrequest`
     - `GET /iclock/service/control`
-5. Device execution result updates command status from callbacks:
+8. Device execution result updates command status from callbacks:
     - `POST /iclock/devicecmd`
     - `POST /iclock/service/control`
-6. Registration UI polls:
+9. Device user uploads and query callbacks are ingested from:
+    - `POST /iclock/cdata` (`tabledata/user`)
+    - `POST /iclock/querydata`
+10. Registration UI polls:
     - `GET /api/zkteco/command-status/{device_sn}/{pin}` for command lifecycle
-    - `GET /api/zkteco/enrollment-status/{device_sn}/{pin}` for biometric upload completion
 
 Behavior details (current implementation):
 - commands are queued for both channels (`getrequest` and `service_control`) to support firmware differences
 - each polling hit returns at most 3 pending commands for that channel
 - command lifecycle: `pending` → `sent` → `acked` (when `Return=0`) or `failed`
+- when one channel acknowledges a command, duplicate rows for the same logical command are auto-marked as acked
+- delete actions queue compatibility command variants for broader firmware support (`DATA DELETE ...`, `DELETE USER`, `DeleteUser`)
+- local app-side deletion is finalized after post-delete `DATA QUERY tablename=user` reconciliation confirms the PIN is absent
+- reconciliation also supports explicit user-table `querydata` packets by `type=tabledata&tablename=user`, and handles `count=0` as clear-all for that device
+- deleting an already-absent local user returns a non-error info response to keep delete actions idempotent in UI
 - command IDs are generated from time + queue row suffix to avoid collisions during batch delivery
 - each queued command is tagged with nullable `pin` so status can be queried per user
 
@@ -1052,9 +1077,7 @@ Example request:
   "name": "John Doe",
   "privilege": 0,
   "face_template": "<template>",
-    "fingerprint_template": "<template>",
-    "enroll_face": true,
-    "enroll_fingerprint": true
+    "fingerprint_template": "<template>"
 }
 ```
 
@@ -1076,7 +1099,7 @@ php artisan make:migration create_zkteco_raw_logs_table
 
 Use the schema from [Section 8.1](#81-raw-logs-table-minimal--capture-everything). Also create the parsed tables from Sections 8.2 and 8.3.
 
-For app-side enrollment sync, also include implemented tables from Sections 8.4 and 8.5.
+For app-side registration sync, also include implemented tables from Sections 8.4 and 8.5.
 
 ```bash
 php artisan migrate
@@ -1448,7 +1471,7 @@ class ZktecoIpWhitelist
 |---|---|
 | `app/Http/Controllers/ZKTeco/AdmsController.php` | Core ADMS protocol handler |
 | `app/Http/Controllers/ZKTeco/DashboardController.php` | Dashboard page & JSON API |
-| `app/Http/Controllers/ZKTeco/UserRegistrationController.php` | Registration page + app-side enrollment APIs |
+| `app/Http/Controllers/ZKTeco/UserRegistrationController.php` | Registration page + app-side registration/sync APIs |
 | `app/Services/ZKTeco/DeviceCommandQueue.php` | Persistent queue service for user/face/fingerprint device sync |
 | `app/Models/ZktecoRawLog.php` | Raw log Eloquent model |
 | `app/Models/ZktecoDeviceUser.php` | Device user upsert model |
@@ -1459,7 +1482,7 @@ class ZktecoIpWhitelist
 | `database/migrations/2026_03_02_000002_create_zkteco_device_commands_table.php` | Device command queue table |
 | `database/migrations/2026_03_02_000003_add_pin_to_zkteco_device_commands_table.php` | Add nullable `pin` to command queue for per-user status tracking |
 | `resources/views/zkteco/dashboard.blade.php` | Dashboard UI (Tailwind + Chart.js) |
-| `resources/views/zkteco/register.blade.php` | Registration + enrollment wizard UI (Tailwind) |
+| `resources/views/zkteco/register.blade.php` | Registration + sync wizard UI (Tailwind) |
 | `routes/web.php` | Route definitions |
 | `routes/api.php` | Dashboard + registration status APIs |
 
@@ -1495,8 +1518,11 @@ class ZktecoIpWhitelist
 │  REG PAGE:   http://SERVER:8000/register-user                   │
 │  API:        http://SERVER:8000/api/zkteco/stats                │
 │  API:        POST /api/zkteco/register-user (queue sync)        │
+│  API:        PUT  /api/zkteco/device-users/{id}                 │
+│  API:        DELETE /api/zkteco/device-users/{id}               │
+│  API:        POST /api/zkteco/sync-device-users                 │
 │  API:        GET  /api/zkteco/command-status/{sn}/{pin}         │
-│  API:        GET  /api/zkteco/enrollment-status/{sn}/{pin}      │
+│  API:        GET  /api/zkteco/known-devices                     │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```

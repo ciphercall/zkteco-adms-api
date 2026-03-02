@@ -14,26 +14,27 @@ class DeviceCommandQueue
         $deviceSn = trim((string) $payload['device_sn']);
         $pin = (int) $payload['pin'];
 
-        $user = ZktecoDeviceUser::updateOrCreate(
-            [
-                'device_sn' => $deviceSn,
-                'pin' => $pin,
-            ],
-            [
-                'name' => (string) $payload['name'],
-                'privilege' => (int) ($payload['privilege'] ?? 0),
-                'card_no' => $payload['card_no'] ?? null,
-                'group_id' => (int) ($payload['group_id'] ?? 1),
-                'disabled' => (bool) ($payload['disabled'] ?? false),
-                'face_template' => $payload['face_template'] ?? null,
-                'fingerprint_template' => $payload['fingerprint_template'] ?? null,
-            ]
-        );
+        $user = ZktecoDeviceUser::firstOrNew([
+            'device_sn' => $deviceSn,
+            'pin' => $pin,
+        ]);
 
-        $enrollFace = (bool) ($payload['enroll_face'] ?? false);
-        $enrollFingerprint = (bool) ($payload['enroll_fingerprint'] ?? false);
+        $user->name = (string) $payload['name'];
+        $user->privilege = (int) ($payload['privilege'] ?? 0);
+        $user->card_no = $payload['card_no'] ?? null;
+        $user->group_id = (int) ($payload['group_id'] ?? 1);
+        $user->disabled = (bool) ($payload['disabled'] ?? false);
 
-        DB::transaction(function () use ($user, $pin, $enrollFace, $enrollFingerprint) {
+        if (array_key_exists('face_template', $payload)) {
+            $user->face_template = $payload['face_template'];
+        }
+        if (array_key_exists('fingerprint_template', $payload)) {
+            $user->fingerprint_template = $payload['fingerprint_template'];
+        }
+
+        $user->save();
+
+        DB::transaction(function () use ($user, $pin) {
             $this->queueCommand($user->device_sn, 'getrequest', $this->buildUserCommand($user), $pin);
             $this->queueCommand($user->device_sn, 'service_control', $this->buildUserCommand($user), $pin);
 
@@ -47,15 +48,36 @@ class DeviceCommandQueue
                 $this->queueCommand($user->device_sn, 'service_control', $this->buildFingerprintCommand($user), $pin);
             }
 
-            if ($enrollFace) {
-                $this->queueCommand($user->device_sn, 'getrequest', "ENROLL_FP Pin={$pin} FingerID=50", $pin);
-            }
-            if ($enrollFingerprint) {
-                $this->queueCommand($user->device_sn, 'getrequest', "ENROLL_FP Pin={$pin} FingerID=0", $pin);
-            }
+            $this->queueUsersQuery($user->device_sn);
         });
 
         return $user;
+    }
+
+    public function queueUserDeletion(ZktecoDeviceUser $user): void
+    {
+        DB::transaction(function () use ($user) {
+            $deleteCommands = $this->buildDeleteUserCommands((int) $user->pin);
+
+            foreach ($deleteCommands as $deleteCommand) {
+                $this->queueCommand($user->device_sn, 'getrequest', $deleteCommand, (int) $user->pin);
+                $this->queueCommand($user->device_sn, 'service_control', $deleteCommand, (int) $user->pin);
+            }
+        });
+    }
+
+    public function queueUsersQuery(string $deviceSn): void
+    {
+        $deviceSn = trim($deviceSn);
+        if ($deviceSn === '') {
+            return;
+        }
+
+        DB::transaction(function () use ($deviceSn) {
+            $query = 'DATA QUERY tablename=user,fielddesc=*,filter=*';
+            $this->queueCommand($deviceSn, 'getrequest', $query, null);
+            $this->queueCommand($deviceSn, 'service_control', $query, null);
+        });
     }
 
     public function pullPendingCommands(string $deviceSn, string $channel, int $limit = 3): array
@@ -102,6 +124,52 @@ class DeviceCommandQueue
                 'ack_payload' => $rawPayload,
                 'acknowledged_at' => now(),
             ]);
+
+        $processedCommands = ZktecoDeviceCommand::query()
+            ->where('cmd_id', $cmdId)
+            ->whereIn('status', ['acked', 'failed'])
+            ->get();
+
+        $devicesToReconcile = $processedCommands
+            ->filter(function ($command) {
+                $template = (string) $command->command_template;
+                return str_contains($template, 'DATA UPDATE user') || $this->isUserDeleteCommand($template);
+            })
+            ->pluck('device_sn')
+            ->filter(fn ($sn) => is_string($sn) && trim($sn) !== '')
+            ->unique()
+            ->values();
+
+        if (! $isSuccess) {
+            foreach ($devicesToReconcile as $deviceSn) {
+                $this->queueUsersQuery((string) $deviceSn);
+            }
+            return;
+        }
+
+        $ackedCommands = $processedCommands->where('status', 'acked');
+
+        foreach ($ackedCommands as $ackedCommand) {
+            ZktecoDeviceCommand::query()
+                ->where('device_sn', $ackedCommand->device_sn)
+                ->where('pin', $ackedCommand->pin)
+                ->where('command_template', $ackedCommand->command_template)
+                ->where('id', '!=', $ackedCommand->id)
+                ->whereIn('status', ['pending', 'sent'])
+                ->update([
+                    'status' => 'acked',
+                    'ack_payload' => '[cross-channel-acked] ' . $rawPayload,
+                    'acknowledged_at' => now(),
+                ]);
+
+            if ($this->isUserDeleteCommand((string) $ackedCommand->command_template)) {
+                $this->queueUsersQuery((string) $ackedCommand->device_sn);
+            }
+        }
+
+        foreach ($devicesToReconcile as $deviceSn) {
+            $this->queueUsersQuery((string) $deviceSn);
+        }
     }
 
     /**
@@ -161,6 +229,17 @@ class DeviceCommandQueue
         return "DATA UPDATE biodata\tPin={$user->pin}\tFingerID=0\tTemplate={$template}";
     }
 
+    private function buildDeleteUserCommands(int $pin): array
+    {
+        return [
+            "DATA DELETE tablename=user,filter=pin={$pin}",
+            "DATA DELETE tablename=user,filter=Pin={$pin}",
+            "DATA DELETE user\tPin={$pin}",
+            "DELETE USER\tPin={$pin}",
+            "DeleteUser\tPin={$pin}",
+        ];
+    }
+
     private function sanitizeTabValue(string $value): string
     {
         return trim(str_replace(["\t", "\r", "\n"], ' ', $value));
@@ -186,11 +265,28 @@ class DeviceCommandQueue
     private function classifyCommand(string $template): string
     {
         if (str_contains($template, 'DATA UPDATE user')) return 'user_sync';
+        if (str_contains($template, 'DATA QUERY tablename=user')) return 'user_query';
         if (str_contains($template, 'DATA UPDATE biophoto')) return 'face_push';
         if (str_contains($template, 'DATA UPDATE biodata')) return 'fingerprint_push';
-        if (str_contains($template, 'ENROLL_FP') && str_contains($template, 'FingerID=50')) return 'face_enroll';
-        if (str_contains($template, 'ENROLL_FP') && str_contains($template, 'FingerID=0')) return 'fingerprint_enroll';
-        if (str_contains($template, 'ENROLL_FP')) return 'enroll';
+        if ($this->isUserDeleteCommand($template)) return 'user_delete';
         return 'other';
+    }
+
+    private function isUserDeleteCommand(string $template): bool
+    {
+        $needleSet = [
+            'DATA DELETE tablename=user',
+            'DATA DELETE user',
+            'DELETE USER',
+            'DeleteUser',
+        ];
+
+        foreach ($needleSet as $needle) {
+            if (str_contains($template, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
